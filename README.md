@@ -65,18 +65,18 @@ The script `skin_editor.py` is run from the command line using `uv run` (or `pyt
 1. **Convert PNG to Text Hex Grid:**
 
 ```bash
-uv run skin_editor.py png2txt -i diamond_steve_32.png -o diamond_steve_hex_32.txt
+uv run skin_editor.py png2txt -i my_skin.png -o my_skin_hex.txt
 ```
 
-This reads the example `diamond_steve_32.png` skin and creates `diamond_steve_hex_32.txt` containing the hex codes.
+This reads your skin PNG (any Minecraft skin file works — e.g. one downloaded from [minecraftskins.com](https://www.minecraftskins.com)) and creates `my_skin_hex.txt` containing the hex codes.
 
 2. **Convert Text Hex Grid back to PNG:**
 
 ```bash
-uv run skin_editor.py txt2png -i diamond_steve_hex_32_adjusted.txt -o diamond_steve_32_adjusted.png
+uv run skin_editor.py txt2png -i my_skin_hex_adjusted.txt -o my_skin_adjusted.png
 ```
 
-This reads `diamond_steve_hex_32_adjusted.txt` (which you might have edited manually or with an LLM's help) and creates a new skin file `diamond_steve_32_adjusted.png`.
+This reads `my_skin_hex_adjusted.txt` (which you might have edited manually or with an LLM's help) and creates a new skin file `my_skin_adjusted.png`.
 
 ## Editing the Text File
 
