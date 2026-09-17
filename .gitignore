@@ -1,10 +1,10 @@
+# 个人皮肤文件、hex 网格文本、调色板：属个人内容，不入库
 *.png
 *.txt
-!before_after.png
-!diamond_steve_32.png
-!diamond_steve_32_adjusted.png
-!diamond_steve_hex_32.txt
-!diamond_steve_hex_32_adjusted.txt
+*.hex
+*.gpl
+
+# 编辑器 / 环境
 .idea/
 .vscode/
 .venv/

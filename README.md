@@ -1,134 +1,189 @@
-
-# Minecraft Skin Hex Editor Helper
+# Minecraft Skin Tool (`skintool`)
 
 > **Fork note:** derived from
-> [EinMaulwurf/minecraft_skin_helper](https://github.com/EinMaulwurf/minecraft_skin_helper)
-> (MIT). Keeps the original PNG ↔ hex-text `skin_editor.py` workflow and adds
-> `split_skin.py` / `split_skin_layers.py`, region-extraction tools that split a skin
-> texture into individual body-part faces (see [Split tools](#split-tools)).
+> [EinMaulwurf/minecraft_skin_helper](https://github.com/EinMaulwurf/minecraft_skin_helper) (MIT).
+> Upstream's `skin_editor.py` (PNG ↔ hex text) has been **merged into this fork's unified
+> entry point `skintool.py`** — it is no longer shipped as a separate script. On top of it
+> this fork adds body-part / face extraction (base + overlay layers), palette-code output
+> and a Windows wrapper. See [License](#license).
 
-A simple Python script to convert Minecraft skin PNG files to and from a text-based grid of hexadecimal color codes.
+Convert Minecraft skin textures between **PNG** and a **hex text grid**, and split a skin
+texture into its individual **body-part faces** for quick inspection.
 
-## Use Case
+## Use case
 
-This tool was primarily created to facilitate editing Minecraft skins, especially when collaborating or using Large Language Models (LLMs) for assistance.
+Editing Minecraft skins by hand is painful; describing pixel changes to an LLM is easier
+when the texture is text:
 
-By converting the skin image into a plain text grid of hex codes:
+1. `skintool png2txt` turns a skin into a grid of `#RRGGBBAA` codes.
+2. You give that text to an LLM (ChatGPT, Claude, Gemini, …) and describe the change
+   ("make the armor purple", "add texture to the hair").
+3. `skintool txt2png` turns the edited grid back into a valid PNG — dimensions and pixel
+   structure guaranteed, so the usual LLM image-generation pitfalls are avoided.
 
-1. You can easily pinpoint and communicate specific pixel changes by referring to line and position within the text file.
-2. You can provide this text representation to an LLM (like ChatGPT, Claude, Gemini, etc.), describe the desired modifications (e.g., "change the shirt color," "add texture to the hair," "make the eyes green"), and have the LLM generate the updated text grid.
-3. The script ensures that the dimensions and pixel data remain correctly structured when converting back to PNG, avoiding common pitfalls of manual pixel editing or LLM image generation inaccuracies.
-
-This allows for precise, pixel-level editing using natural language instructions, leveraging the capabilities of LLMs.
-
-## Features
-
-- Converts standard Minecraft skin PNGs (e.g., 64x64) to a `.txt` file.
-- Each pixel is represented by its `#RRGGBBAA` hex code (Red, Green, Blue, Alpha).
-- Pixels are arranged in the text file exactly as they appear in the image grid.
-- Converts the text grid file back into a valid PNG skin file.
-- Handles transparency correctly.
-
-## Limitations
-
-While the script works for all standard skin resolutions (64x32, 64x64 and 128x128), editing the file with an LLM does work best for the smaller 64x32 skins. In my tests with Gemini 2.5 Pro, it always stopped at 56 rows when generating the hex representation of a 64x64 skin. This is likely due to the token limit of the model, as a 64x64 skin comes out to around 35000 tokens (for Gemini).
-
-If you have a 64x64 skin, you can convert it to HEX and just delete the extra rows, keeping only the first 32 rows.
+For checking *what is actually painted where*, `skintool base` / `skintool layers` cut the
+texture into per-part faces (optionally as palette codes), which is the fastest way to spot
+a missing / transparent region.
 
 ## Requirements
 
-- Python 3.x
-- Pillow library (Python Imaging Library fork)
-- `uv` ([link](https://docs.astral.sh/uv/) or a standard Python environment capable of running scripts and installing packages)
+- Python 3.10+ (developed against 3.13)
+- [Pillow](https://pypi.org/project/Pillow/)
+- optional: [`uv`](https://docs.astral.sh/uv/) — with it no manual install is needed
 
 ## Installation
 
-When using `uv`, you don't need to install any additional packages. If you are using a standard Python environment:
 ```bash
+uv sync                       # creates .venv + installs Pillow (recommended)
+# or
 pip install Pillow
 ```
 
-## Usage
+## Quick start
 
-The script `skin_editor.py` is run from the command line using `uv run` (or `python skin_editor.py` if not using `uv`).
+On Windows the bundled wrapper `skintool.cmd` finds the interpreter for you (`.venv`, then
+`python`, `py -3`, `uv run python`) — no full python path, no activation:
 
-**Arguments:**
-
-- `mode`: The conversion direction.
-    - `png2txt`: Convert a PNG image file to a text hex grid.
-    - `txt2png`: Convert a text hex grid file to a PNG image.
-- `-i` or `--input`: Path to the input file (e.g., `steve.png` for `png2txt`, `steve_hex.txt` for `txt2png`).
-- `-o` or `--output`: Path to the output file (e.g., `steve_hex.txt` for `png2txt`, `steve_edited.png` for `txt2png`).
-
-**Examples:**
-
-1. **Convert PNG to Text Hex Grid:**
-
-```bash
-uv run skin_editor.py png2txt -i my_skin.png -o my_skin_hex.txt
+```bat
+skintool png2txt Crow_35.png                     :: -> Crow_35_hex.txt
+skintool txt2png Crow_35_hex.txt                 :: -> Crow_35_edited.png
+skintool base    Crow_35.png slim -c -a          :: 底层 6 部位 × 6 面 + 调色板代号 + 统计
+skintool layers  Crow_35.png -s -c               :: 第二层 6 部位 × 6 面
+skintool                                         :: 双击 = 交互菜单
 ```
 
-This reads your skin PNG (any Minecraft skin file works — e.g. one downloaded from [minecraftskins.com](https://www.minecraftskins.com)) and creates `my_skin_hex.txt` containing the hex codes.
-
-2. **Convert Text Hex Grid back to PNG:**
+Without the wrapper, or on Linux/macOS, the same commands work through `skintool.py`
+(PNG input is read directly — converting to hex text first is **not** required):
 
 ```bash
-uv run skin_editor.py txt2png -i my_skin_hex_adjusted.txt -o my_skin_adjusted.png
+python skintool.py base skin.png slim -c
+python skintool.py layers skin_hex.txt alex -a --out report.txt
 ```
 
-This reads `my_skin_hex_adjusted.txt` (which you might have edited manually or with an LLM's help) and creates a new skin file `my_skin_adjusted.png`.
+## Commands
 
-## Editing the Text File
+| Command | Input | Output | Notes |
+|---|---|---|---|
+| `png2txt` (`p2t`) | skin PNG | hex grid text (default `<name>_hex.txt`) | feeds the LLM workflow |
+| `txt2png` (`t2p`) | hex grid text | PNG (default `<name>_edited.png`) | `_hex` suffix is stripped |
+| `base` (`b`) | PNG **or** hex text | 6 base parts × 6 faces | Head / Torso / arms / legs |
+| `layers` (`l`) | PNG **or** hex text | 6 overlay parts × 6 faces | Hat / Jacket / sleeves / pants |
 
-- Open the `.txt` file generated by the `png2txt` command in any text editor.
-- Each line corresponds to a row of pixels in the skin.
-- Each `#RRGGBBAA` code on a line corresponds to a pixel in that row.
-- **Crucial:** When editing, ensure you maintain the exact grid structure. Every line MUST have the same number of hex codes, and the total number of lines must not change. Use only valid 8-digit hexadecimal codes prefixed with `#`. Incorrect formatting will likely cause errors during the `txt2png` conversion.
+Run `skintool <command> -h` for everything, or `skintool` with no arguments for the
+interactive menu (pick a command, then pick a file from the current directory by number).
 
-## Example
+### Options for `base` / `layers`
 
-The example skin and images from the upstream repository were trimmed in this fork. To test the conversion, point `png2txt` at any Minecraft skin PNG of yours (e.g., downloaded from [minecraftskins.com](https://www.minecraftskins.com)).
+| Option | Meaning |
+|---|---|
+| positional `wide\|slim\|steve\|alex` | arm model; default `wide` (Steve) |
+| `-s` / `-w` | shorthand for `slim` / `wide` |
+| `-c`, `--code` | palette-code output (transparent `.`, unknown `?`); needs a palette |
+| `-p`, `--palette FILE` | explicit GIMP `.gpl` palette (otherwise auto-detected) |
+| `-a`, `--alpha` | per-face opacity statistics (find unpainted / transparent faces) |
+| `-o`, `--out FILE` | write the full report to a file instead of stdout |
+| `--size 64\|128` | force the texture size (auto-detected from the input by default) |
 
-A typical prompt used to recolor a skin via an LLM:
+Without `-c` the faces are printed as raw `#RRGGBBAA` hex.
+
+## Input formats
+
+- **PNG**: standard Minecraft skin sizes `64x32` (legacy Java), `64x64` (Java) or
+  `128x128` (Bedrock). Part extraction needs a square texture (`64x64` / `128x128`).
+- **Hex text**: one texture row per line, one `#RRGGBBAA` code per pixel, blank lines
+  skipped. Encoding may be UTF-8 with/without BOM, or GBK. Written output is UTF-8 (BOM).
+- The format is detected from the **file content**, so a wrongly named file still works —
+  and a PNG input never needs a manual hex conversion step.
+
+## Palettes
+
+No palette is bundled (palettes are personal content). Drop your own GIMP palette next to
+the scripts — if exactly one `.gpl` exists in the script directory or the current working
+directory it is used automatically; with zero or several, pass `--palette FILE`.
+
+GPL line format:
+
+```
+R G B <tab> Name [CODE]        e.g.   8   8  12<TAB>Void Black [0]
+```
+
+Codes are read from `[CODE]` (leading `[CODE] Name` also works). With `-c`:
+
+- `.` = fully transparent pixel
+- `?` = color not present in the palette
+- otherwise = your code, one character per pixel
+
+## Editing the hex text with an LLM
+
+- Each line = one row of the texture, each `#RRGGBBAA` = one pixel.
+- **Crucial:** keep the grid structure — same number of codes per line, same number of
+  lines, only valid 8-digit hex codes prefixed with `#`. Broken structure is reported when
+  converting back.
+
+A prompt that works well:
+
 ```txt
-I need your help customizing my minecraft skin. I attached it as an PNG. 
-Also, below I will give you the HEX representation of that skin where you can see 
-the color of each pixel. You will give me the HEX representation back and only 
-change the values in it. Make sure to use the `#RRGGBBAA` format. 
+I need your help customizing my minecraft skin. I attached it as an PNG.
+Also, below I will give you the HEX representation of that skin where you can see
+the color of each pixel. You will give me the HEX representation back and only
+change the values in it. Make sure to use the `#RRGGBBAA` format.
 You do not change the number of rows or columns. The result should have the same dimensions!
 
-Currently, the skin has the character wearing a typical diamond minecraft armor. 
+Currently, the skin has the character wearing a typical diamond minecraft armor.
 I'd like you to change the color to purple.
 
 (and then the HEX representation of the skin)
 ```
 
-## Split tools
+## Part / face layout
 
-Two extra scripts split a skin **hex text** file into per-body-part faces, for quick
-inspection of a texture region (works with skins exported by `skin_editor.py png2txt`).
+`base` extracts Head / Torso / RightArm / LeftArm / RightLeg / LeftLeg;
+`layers` extracts the overlay (second layer): Hat / Jacket / RightSleeve / LeftSleeve /
+RightPants / LeftPants. Each part is printed as its six faces (`top`, `bottom`, `right`,
+`front`, `left`, `back`) with the source coordinates in the heading.
 
-- `split_skin.py` — **base layer**: Head / Torso / Right Arm / Left Arm / Right Leg / Left Leg.
-- `split_skin_layers.py` — **second (overlay) layer**: Hat / Jacket / Right Sleeve / Left Sleeve / Right Pants / Left Pants.
+`wide` (Steve, 4 px arms) and `slim` (Alex, 3 px arms) are **not** just a width change:
+the slim arm texture is packed compactly, so the `left` / `bottom` / `back` faces start
+1 px earlier (`x47` instead of `x48`). Pass the correct model or the arm faces will be
+offset by one pixel. The layout matches Blockbench's display.
 
-No palette is bundled — each user supplies their own GIMP palette (see `--code` below).
+`-a` semantics differ per layer: `base` flags faces that are not fully painted
+(suspected missing face), while `layers` only flags faces that are **entirely**
+transparent (partial transparency is normal for overlays).
 
-Both share the same CLI:
+## Limitations
 
-```bash
-python split_skin.py skin_hex.txt [wide|slim] [--size 64|128] [--code] [--alpha] [--out output.txt]
-python split_skin_layers.py skin_hex.txt [wide|slim] [--size 64|128] [--code] [--alpha] [--out output.txt]
-```
+LLM editing works best on the smaller textures: a `64x64` skin is roughly 35k tokens, and
+models have been observed to stop early while regenerating it. If your model truncates,
+edit only the rows you need, or use a `64x32` texture.
 
-- `wide` (Steve, 4 px) vs `slim` (Alex, 3 px compact arms).
-- `--code`: print one palette code per pixel (transparent = `.`, unknown = `?`).
-  Pass your palette with `--palette FILE`; without it, the script uses the **single**
-  `.gpl` file next to itself, and if there are several or none it exits and asks for
-  `--palette`.
-- `--alpha`: append per-face opacity statistics (find unpainted / fully transparent faces).
-- Without `--code`, raw `#RRGGBBAA` hex is printed instead.
+## Repository layout
+
+| File | Role |
+|---|---|
+| `skintool.py` | unified CLI (`png2txt` / `txt2png` / `base` / `layers`) + interactive menu |
+| `skintool.cmd` | Windows wrapper: locates Python, passes arguments, menu on double-click |
+| `skinio.py` | shared IO layer: PNG ↔ hex grid, size detection, palette parsing, code mapping |
+| `split_skin.py` | base-layer part extraction (also usable standalone) |
+| `split_skin_layers.py` | overlay-layer part extraction (also usable standalone) |
 
 ## License
 
 This project is licensed under the MIT License — see [LICENSE](LICENSE).
-Original `skin_editor.py` and docs © 2025 EinMaulwurf; split tools © this fork's author.
+Original `skin_editor.py` and upstream docs © 2025 EinMaulwurf; `skintool.py` / `skinio.py` /
+`split_skin*.py` and this fork's docs © this fork's author.
+
+---
+
+## 中文速查
+
+```bat
+skintool png2txt 皮肤.png                  :: PNG → hex 文本（发 LLM 改色）
+skintool txt2png 皮肤_hex.txt              :: 改完的文本 → PNG
+skintool base    皮肤.png slim -c -a       :: 底层各部位/面（-c 调色板代号，-a 漏面统计）
+skintool layers  皮肤.png -s -c            :: 第二层（-s = 纤细/Alex 手臂）
+skintool                                   :: 不带参数 = 交互菜单（双击 skintool.cmd）
+```
+
+调色板：把自己的 `.gpl` 放在脚本目录或当前目录（唯一一个即自动使用，否则用 `-p 文件` 指定）。
+输入可直接是 PNG，**不需要**先手工转成 hex 文本。
