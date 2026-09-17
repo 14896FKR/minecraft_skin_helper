@@ -489,7 +489,7 @@ def add_split_args(parser):
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="skintool",
-        description="MC 皮肤工具箱：PNG ↔ hex 文本、底层 / 第二层部位提取。",
+        description="MC 皮肤工具箱：PNG ↔ hex 文本、底层 / 第二层部位提取、两份报告合并回 PNG。",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
