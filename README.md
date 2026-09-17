@@ -42,14 +42,16 @@ pip install Pillow
 ## Quick start
 
 On Windows the bundled wrapper `skintool.cmd` finds the interpreter for you (`.venv`, then
-`python`, `py -3`, `uv run python`) — no full python path, no activation:
+`python`, `py -3`, `uv run python`) — no full python path, no activation. Replace `skin.png`
+with your own skin file name:
 
 ```bat
-skintool png2txt Crow_35.png                     :: -> Crow_35_hex.txt
-skintool txt2png Crow_35_hex.txt                 :: -> Crow_35_edited.png
-skintool base    Crow_35.png slim -c -a          :: 底层 6 部位 × 6 面 + 调色板代号 + 统计
-skintool layers  Crow_35.png -s -c               :: 第二层 6 部位 × 6 面
-skintool                                         :: 双击 = 交互菜单
+skintool png2txt skin.png                  :: -> skin_hex.txt
+skintool txt2png skin_hex.txt              :: -> skin_edited.png
+skintool base    skin.png slim -a          :: 底层 6 部位 × 6 面（纤细手臂 + 漏面统计）
+skintool layers  skin.png -s               :: 第二层 6 部位 × 6 面（-s = slim/Alex）
+skintool base    skin.png -c -p palette.gpl :: 调色板代号输出（需自备 .gpl 调色板）
+skintool                                   :: 双击 = 交互菜单
 ```
 
 Without the wrapper, or on Linux/macOS, the same commands work through `skintool.py`
@@ -85,6 +87,22 @@ interactive menu (pick a command, then pick a file from the current directory by
 | `--size 64\|128` | force the texture size (auto-detected from the input by default) |
 
 Without `-c` the faces are printed as raw `#RRGGBBAA` hex.
+
+### Interactive menu
+
+Running `skintool` with no arguments (or double-clicking `skintool.cmd`) walks through the
+same four commands:
+
+1. choose a command (1-4), then pick a file from the current directory **by number** (a full
+   path works too); `0` always goes back;
+2. answer numbered questions — arm model, colour output, opacity stats, and output mode
+   (`1` screen, `2` screen + file, `3` file only). Every question shows its default, and the
+   palette-code option is only offered when a `.gpl` palette is actually available;
+3. the menu prints the **equivalent CLI command** before running it, then waits for Enter to
+   return to a cleared screen — results are never silently scrolled away.
+
+Stray input can not silently become a file: a name without an extension (like `n`) is
+confirmed first, and an existing output file is never overwritten without a yes.
 
 ## Input formats
 
@@ -178,12 +196,19 @@ Original `skin_editor.py` and upstream docs © 2025 EinMaulwurf; `skintool.py` /
 ## 中文速查
 
 ```bat
-skintool png2txt 皮肤.png                  :: PNG → hex 文本（发 LLM 改色）
-skintool txt2png 皮肤_hex.txt              :: 改完的文本 → PNG
-skintool base    皮肤.png slim -c -a       :: 底层各部位/面（-c 调色板代号，-a 漏面统计）
-skintool layers  皮肤.png -s -c            :: 第二层（-s = 纤细/Alex 手臂）
-skintool                                   :: 不带参数 = 交互菜单（双击 skintool.cmd）
+skintool png2txt 皮肤.png                 :: PNG → hex 文本（发 LLM 改色）
+skintool txt2png 皮肤_hex.txt             :: 改完的文本 → PNG
+skintool base    皮肤.png slim -a         :: 底层各部位/面（-a = 漏面统计）
+skintool layers  皮肤.png -s              :: 第二层（-s = 纤细/Alex 手臂）
+skintool base    皮肤.png -c -p 调色板.gpl :: 调色板代号输出（需自备 .gpl）
+skintool                                  :: 不带参数 = 交互菜单（双击 skintool.cmd）
 ```
 
-调色板：把自己的 `.gpl` 放在脚本目录或当前目录（唯一一个即自动使用，否则用 `-p 文件` 指定）。
-输入可直接是 PNG，**不需要**先手工转成 hex 文本。
+- **菜单怎么走**：选命令（1-4）→ 按序号选当前目录里的文件（也可粘完整路径）→
+  手臂类型 → 颜色输出 → 不透明统计 → 输出方式（`1` 打印到屏幕 / `2` 屏幕+写文件 /
+  `3` 只写文件）。每题都标了默认值，**任何一步输 `0` 都能返回**；跑之前会打印
+  「等价命令」，跑完按回车清屏回菜单，结果不会被刷掉。
+- **不会误建文件**：文件名处输入 `n` 这类没扩展名的内容会先确认；已存在的输出文件
+  覆盖前会问一声；没有 `.gpl` 调色板时菜单不会问代号输出，直接给 hex 颜色。
+- 调色板：把自己的 `.gpl` 放在脚本目录或当前目录（唯一一个即自动使用，否则用 `-p 文件` 指定）。
+- 输入可直接是 PNG，**不需要**先手工转成 hex 文本。

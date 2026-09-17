@@ -147,8 +147,17 @@ def build_report(path, arm="wide", size=None, code=False, palette=None, alpha=Fa
     return "\n".join(lines), meta
 
 
-def emit(text, meta, out_path=None):
-    """统一输出：写文件或打印到 stdout，并打印警告。"""
+def emit(text, meta, out_path=None, also_print=None):
+    """统一输出。
+
+    * out_path 为空            -> 报告打到屏幕；
+    * out_path 给定            -> 默认只写文件（also_print=True 时屏+文件都要）；
+    * 末尾统一打印读取阶段的警告。
+    """
+    if also_print is None:
+        also_print = out_path is None
+    if also_print:
+        print(text)
     if out_path:
         try:
             with open(out_path, "w", encoding="utf-8-sig", newline="\n") as f:
@@ -158,8 +167,6 @@ def emit(text, meta, out_path=None):
         print(f"已写入: {out_path}")
         for part_name in meta["parts"]:
             print(f"[部位] {part_name}")
-    else:
-        print(text)
     skinio.print_warnings(meta["warnings"])
 
 

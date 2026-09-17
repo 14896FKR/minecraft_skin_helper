@@ -302,30 +302,40 @@ def palette_search_dirs():
     return dirs
 
 
-def find_palette(explicit=None):
-    """确定 GPL 调色板路径。
-
-    * 显式给出 -> 校验存在后使用；
-    * 未给出   -> 在脚本目录 / 当前目录里数 .gpl：
-                   恰好一个用那个；零个或多个都报错并提示 --palette。
-    """
+def palette_candidates(explicit=None):
+    """列出可用调色板候选路径（explicit 给出时只校验它本身）。不报错、不退出。"""
     if explicit:
-        if not os.path.isfile(explicit):
-            die(f"错误：找不到调色板文件 {explicit}")
-        return explicit
-
-    dirs = palette_search_dirs()
+        return [explicit] if os.path.isfile(explicit) else []
     found = []
-    for folder in dirs:
+    for folder in palette_search_dirs():
         try:
             found += [os.path.join(folder, n) for n in sorted(os.listdir(folder))
                       if n.lower().endswith(".gpl")]
         except OSError:
             continue
+    return found
+
+
+def lookup_palette(explicit=None):
+    """唯一可用调色板路径；找不到或多个时返回 None（供菜单等场景自行决定）。"""
+    found = palette_candidates(explicit)
+    return found[0] if len(found) == 1 else None
+
+
+def find_palette(explicit=None):
+    """确定 GPL 调色板路径（命令行用，失败即报错退出）。
+
+    * 显式给出 -> 校验存在后使用；
+    * 未给出   -> 在脚本目录 / 当前目录里数 .gpl：
+                   恰好一个用那个；零个或多个都报错并提示 --palette。
+    """
+    found = palette_candidates(explicit)
     if len(found) == 1:
         return found[0]
+    if explicit:
+        die(f"错误：找不到调色板文件 {explicit}")
     if not found:
-        die("错误：" + "、".join(dirs) + " 下都没有 .gpl 调色板文件，"
+        die("错误：" + "、".join(palette_search_dirs()) + " 下都没有 .gpl 调色板文件，"
             "请用 --palette 指定，或改用 hex 输出（不加 -c/--code）。")
     die("错误：找到多个 GPL 调色板文件（"
         + "、".join(os.path.basename(p) for p in found)

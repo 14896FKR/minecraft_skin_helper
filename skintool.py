@@ -10,17 +10,18 @@
     layers    PNG 或 hex    ->  第二层（overlay）6 部位 × 6 面提取
                                 （Hat/Jacket/双袖/双裤）
 
-示例（推荐用同目录的 skintool.cmd，免输 python 路径）:
-    skintool png2txt Crow_35.png
-    skintool txt2png Crow_35_hex.txt
-    skintool base   Crow_35.png slim -c -a
-    skintool layers Crow_35.png -s -c
-    skintool                       # 不带参数 = 交互菜单
+示例（文件名换成你自己的皮肤即可；推荐用同目录的 skintool.cmd，免输 python 路径）:
+    skintool png2txt skin.png                     # -> skin_hex.txt
+    skintool txt2png skin_hex.txt                 # -> skin_edited.png
+    skintool base    skin.png slim -a             # 底层提取（纤细手臂 + 漏面统计）
+    skintool layers  skin.png -s                  # 第二层提取（-s = slim）
+    skintool base    skin.png -c -p palette.gpl   # 调色板代号输出（需自备 .gpl）
+    skintool                                      # 不带参数 = 交互菜单
 
 参数速记（base / layers）:
     位置参数 [wide|slim|steve|alex]   手臂类型，默认 wide（Steve）
     -s / -w     等同 slim / wide
-    -c          调色板代号输出（透明 '.'，未知色 '?'）
+    -c          调色板代号输出（透明 '.'，未知色 '?'）——需要 .gpl 调色板
     -p FILE     指定 GPL 调色板（-c 缺省自动探测脚本目录 / 当前目录里唯一的 .gpl）
     -a          附不透明统计（漏面 / 未绘制检查）
     -o FILE     完整输出写入文件（缺省打到屏幕）
@@ -43,15 +44,145 @@ ALIASES = {
     "l": "layers", "layer": "layers", "layers": "layers", "第二层": "layers",
 }
 
-MENU = """
-================ MC 皮肤工具箱 skintool ================
-  1) png2txt   PNG 皮肤   ->  hex 网格文本（给 LLM 改色）
-  2) txt2png   hex 文本   ->  PNG 皮肤（改完转回来）
-  3) base      底层部位 / 面提取（Head/Torso/双臂/双腿）
-  4) layers    第二层部位 / 面提取（Hat/Jacket/双袖/双裤）
-  d) 显示命令用法       0) 退出
-========================================================
-"""
+
+class Cancelled(Exception):
+    """菜单里用户按 0 / 返回，取消当前动作。"""
+
+
+# ---------------------------------------------------------------- 终端小工具
+def clear_screen():
+    """清屏（只在真正的交互终端里做；管道 / 重定向时保持输出可读）。"""
+    if not sys.stdout.isatty():
+        return
+    os.system("cls" if os.name == "nt" else "clear")
+
+
+def hr(char="=", width=64):
+    print(char * width)
+
+
+def title(text):
+    print()
+    hr("=")
+    print("  " + text)
+    hr("=")
+
+
+def pause(text="\n按回车返回菜单…"):
+    try:
+        input(text)
+    except (EOFError, KeyboardInterrupt):
+        print()
+
+
+def echo_cmd(cmd):
+    print(f"\n  等价命令: {cmd}\n")
+
+
+def ask_yes_no(prompt, default=False):
+    raw = input(prompt).strip().lower()
+    if not raw:
+        return default
+    if raw in ("n", "no", "不", "否"):
+        return False
+    return raw[0] in ("y", "1", "是")
+
+
+def ask_choice(prompt, options, default, extra=None):
+    """编号选择：options = [(键, 说明), ...]；返回键；0/回车之外非法输入会重问。
+
+    回车 = 默认项；0 / q / 返回 = 取消当前动作（返回 None）。
+    说明里写清楚每项干什么，避免「输入 N 被当成文件名」这类误操作。
+    """
+    print()
+    for key, label in options:
+        mark = "   <- 默认" if key == default else ""
+        print(f"    [{key}] {label}{mark}")
+    keys = [k for k, _ in options]
+    while True:
+        try:
+            raw = input(f"\n{prompt}（回车 = {default}，0 = 返回）: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+        if not raw:
+            return default
+        if raw in ("0", "q", "back", "return", "返回", "取消"):
+            return None
+        if extra and raw in extra:
+            return extra[raw]
+        if raw in keys:
+            return raw
+        print(f"  ！请输入 {' / '.join(keys)}，或 0 返回。")
+
+
+def pick_input(accept, prompt="选择文件"):
+    """列出当前目录候选文件供挑选（也可直接粘完整路径）。返回路径；取消返回 None。"""
+    exts = {"png": (".png",), "txt": (".txt", ".hex"),
+            "both": (".png", ".txt", ".hex")}[accept]
+    folder = os.getcwd()
+    try:
+        files = sorted(n for n in os.listdir(folder)
+                       if os.path.isfile(os.path.join(folder, n))
+                       and n.lower().endswith(exts))
+    except OSError:
+        files = []
+    print()
+    print(f"  当前目录: {folder}")
+    if files:
+        for i, name in enumerate(files, 1):
+            print(f"    {i}) {name}")
+    else:
+        print("    （本目录没有候选文件，可直接粘贴完整路径）")
+    while True:
+        try:
+            raw = input(f"\n{prompt}（序号 / 完整路径，0 = 返回）: ").strip().strip('"')
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+        if raw in ("", "0", "q", "back", "返回"):
+            return None
+        if raw.isdigit() and files and 1 <= int(raw) <= len(files):
+            return os.path.join(folder, files[int(raw) - 1])
+        if os.path.isfile(raw):
+            return os.path.abspath(raw)
+        print("  ！找不到这个文件，请重输（0 = 返回）。")
+
+
+def ask_output_file(default, allow_skip=False):
+    """问输出文件名：回车 = 默认名；已存在则问是否覆盖；取消抛 Cancelled。
+
+    allow_skip=True 时输入 n/no 表示「不写文件」（只打印到屏幕）；
+    两者都会拦下「n」这类不像文件名的输入，避免误建奇怪的文件。
+    """
+    folder = os.path.dirname(default) or os.getcwd()
+    while True:
+        hint = "（回车 = {}{}）".format(
+            os.path.basename(default), "，n = 不写文件" if allow_skip else "")
+        try:
+            raw = input(f"\n输出文件名{hint}: ").strip().strip('"')
+        except (EOFError, KeyboardInterrupt):
+            print()
+            raise Cancelled()
+        if raw in ("0", "q", "back", "返回"):
+            raise Cancelled()
+        if allow_skip and raw.lower() in ("n", "no", "不", "否"):
+            print("  -> 不写文件，结果只打印到屏幕。")
+            return None
+        path = raw or default
+        if not os.path.isabs(path) and os.sep not in path and "/" not in path:
+            path = os.path.join(folder, path)
+        name = os.path.basename(path)
+        # 防误建：像 "n" / "no" / 无扩展名的短词，多半不是想建的文件名
+        if "." not in name or name.lower() in ("n", "no", "y", "yes", "是", "不"):
+            print(f"  ！「{name}」不像文件名（没有扩展名）—— 请确认要新建的就是它。")
+            if not ask_yes_no("     仍要新建这个文件? [y/N]: "):
+                continue
+        if os.path.isfile(path) and not ask_yes_no(
+                f"  ！{os.path.basename(path)} 已存在，覆盖? [y/N]: "):
+            continue
+        print(f"  -> 将写入: {path}")
+        return path
 
 
 # ---------------------------------------------------------------- 四个动作
@@ -80,7 +211,6 @@ def run_txt2png(src, out=None, quiet=False):
     if info["kind"] != "txt":
         skinio.die(f"错误：txt2png 需要 hex 文本输入，{src} 是 PNG 图片"
                    f"（若想导出 hex 请用 png2txt）。")
-    width, height = info["shape"]
     out = out or skinio.default_out_path(src, "_edited", ".png")
     existed = os.path.isfile(out)
     width, height, bad = skinio.write_png(info["data"], out)
@@ -94,12 +224,12 @@ def run_txt2png(src, out=None, quiet=False):
 
 
 def run_split(kind, src, arm="wide", code=False, palette=None, alpha=False,
-              out=None, size=None):
+              out=None, also_print=None):
     """kind = "base" / "layers"：提取部位并输出。返回报告文本。"""
     module = split_skin if kind == "base" else split_skin_layers
-    text, meta = module.build_report(src, arm=arm, size=size, code=code,
+    text, meta = module.build_report(src, arm=arm, code=code,
                                      palette=palette, alpha=alpha)
-    module.emit(text, meta, out)
+    module.emit(text, meta, out, also_print)
     return text
 
 
@@ -113,7 +243,7 @@ def add_split_args(parser):
     parser.add_argument("-s", "--slim", action="store_true", help="纤细手臂（Alex）")
     parser.add_argument("-w", "--wide", action="store_true", help="经典手臂（Steve）")
     parser.add_argument("-c", "--code", action="store_true",
-                        help="调色板代号输出（透明 '.'，未知色 '?'）")
+                        help="调色板代号输出（透明 '.'，未知色 '?'）——需 .gpl 调色板")
     parser.add_argument("-p", "--palette", metavar="FILE", help="GPL 调色板文件")
     parser.add_argument("-a", "--alpha", action="store_true", help="附不透明统计")
     parser.add_argument("-o", "--out", metavar="FILE", help="输出写入文件")
@@ -177,130 +307,160 @@ def cli(argv):
         run_txt2png(args.file, args.out)
     else:
         run_split(command, args.file, arm=arm_of(args), code=args.code,
-                  palette=args.palette, alpha=args.alpha, out=args.out,
-                  size=args.size)
+                  palette=args.palette, alpha=args.alpha, out=args.out)
     return 0
 
 
 # ---------------------------------------------------------------- 交互菜单
-def ask(prompt, default=""):
-    raw = input(prompt).strip().strip('"')
-    return raw or default
-
-
-def ask_yes_no(prompt, default=False):
-    raw = input(prompt).strip().lower()
-    if not raw:
-        return default
-    return raw[0] in ("y", "1", "是")
-
-
-def pick_input(accept="both"):
-    """列出当前目录候选文件供选择；也可直接粘贴路径。返回路径或 None。"""
-    exts = {"png": (".png",), "txt": (".txt", ".hex"),
-            "both": (".png", ".txt", ".hex")}[accept]
-    folder = os.getcwd()
-    files = sorted(f for f in os.listdir(folder)
-                   if os.path.isfile(os.path.join(folder, f))
-                   and f.lower().endswith(exts))
-    print(f"\n当前目录: {folder}")
-    if files:
-        for i, name in enumerate(files, 1):
-            print(f"  {i}) {name}")
-    else:
-        print("  （没有候选文件，直接粘贴完整路径即可）")
-    while True:
-        raw = input("选择文件（序号或路径，回车取消）: ").strip().strip('"')
-        if not raw:
-            return None
-        if raw.isdigit() and files and 1 <= int(raw) <= len(files):
-            return os.path.join(folder, files[int(raw) - 1])
-        if os.path.isfile(raw):
-            return raw
-        print("  找不到该文件，请重试。")
-
-
-def guard(func, *a, **kw):
-    """菜单里执行动作：出错不退出程序，回到菜单。"""
-    try:
-        func(*a, **kw)
-    except SystemExit as e:
-        if e.code not in (0, None):
-            print("[已取消，返回菜单]")
-    except KeyboardInterrupt:
-        print("\n[已取消]")
-    except Exception as e:                       # 兜底：不让菜单崩掉
-        print(f"[出错] {e}")
+def show_menu():
     print()
+    hr("=")
+    print("  MC 皮肤工具箱 skintool")
+    print(f"  当前目录: {os.getcwd()}")
+    hr("=")
+    print("   1) png2txt   PNG 皮肤  ->  hex 文本（发给 LLM 改色）")
+    print("   2) txt2png   hex 文本  ->  PNG 皮肤（改完转回来）")
+    print("   3) base      底层部位 / 面提取（头 / 躯干 / 双臂 / 双腿）")
+    print("   4) layers    第二层部位 / 面提取（帽 / 外套 / 双袖 / 双裤）")
+    print("   d) 命令用法与示例            0) 退出")
+    hr("-")
+    print("  提示: 皮肤 PNG 可直接选，不用先转成 hex 文本；每步都可用 0 返回。")
 
 
-def menu_png2txt():
-    src = pick_input("png")
+def act_png2txt():
+    title("png2txt —— PNG 皮肤  ->  hex 网格文本")
+    src = pick_input("png", "选择 PNG 皮肤文件")
     if not src:
         return
     default = skinio.default_out_path(src, "_hex", ".txt")
-    out = ask(f"输出文本（回车 = {os.path.basename(default)}）: ", default)
+    out = ask_output_file(default)                 # png2txt 的输出必须是文件
+    echo_cmd(f'skintool png2txt "{os.path.basename(src)}" -o "{os.path.basename(out)}"')
     run_png2txt(src, out)
 
 
-def menu_txt2png():
-    src = pick_input("txt")
+def act_txt2png():
+    title("txt2png —— hex 网格文本  ->  PNG 皮肤")
+    src = pick_input("txt", "选择 hex 文本文件")
     if not src:
         return
     default = skinio.default_out_path(src, "_edited", ".png")
-    out = ask(f"输出图片（回车 = {os.path.basename(default)}）: ", default)
+    out = ask_output_file(default)
+    echo_cmd(f'skintool txt2png "{os.path.basename(src)}" -o "{os.path.basename(out)}"')
     run_txt2png(src, out)
 
 
-def menu_split(kind):
-    src = pick_input("both")
+def act_split(kind):
+    label = "base —— 底层部位 / 面提取" if kind == "base" \
+        else "layers —— 第二层（overlay）部位 / 面提取"
+    title(label)
+    src = pick_input("both", "选择皮肤（PNG 图片或 hex 文本）")
     if not src:
         return
-    arm = "slim" if ask("手臂类型 [w]ide(默认) / [s]lim(alex): ").lower().startswith("s") \
-        else "wide"
-    code = ask_yes_no("用调色板代号输出（-c）? [y/N]: ")
-    palette = None
-    if code:
-        try:
-            palette = skinio.find_palette()
-            print(f"调色板: {palette}")
-        except SystemExit:
-            print("！未自动找到唯一 .gpl 调色板：请改用 hex 输出，"
-                  "或把调色板放到脚本目录后重试。")
+
+    arm = ask_choice("手臂类型（决定手臂/袖子面的坐标布局）",
+                     [("1", "wide / Steve —— 经典 4px 手臂"),
+                      ("2", "slim / Alex —— 纤细 3px 手臂")],
+                     "1", extra={"w": "1", "wide": "1", "steve": "1",
+                                 "s": "2", "slim": "2", "alex": "2"})
+    if arm is None:
+        return
+    arm = "wide" if arm == "1" else "slim"
+
+    palette_path = skinio.lookup_palette()
+    code = False
+    if palette_path:
+        color = ask_choice("颜色输出方式",
+                           [("1", "hex 颜色 #RRGGBBAA（信息全，长）"),
+                            ("2", f"调色板代号（用 {os.path.basename(palette_path)}，紧凑）")],
+                           "1", extra={"h": "1", "hex": "1", "c": "2", "code": "2"})
+        if color is None:
             return
-    alpha = ask_yes_no("附不透明统计（-a）? [y/N]: ")
-    out = ask("输出文件（回车 = 直接打印到屏幕）: ") or None
-    run_split(kind, src, arm=arm, code=code, palette=palette, alpha=alpha, out=out)
+        code = color == "2"
+    else:
+        print("\n  提示: 脚本目录 / 当前目录里没有 .gpl 调色板 -> 只输出 hex 颜色。")
+        print("        要调色板代号输出（-c）：放一个 .gpl 到本目录，或用 -p 指定。")
+
+    alpha = ask_choice("不透明统计（-a）",
+                       [("1", "不要"),
+                        ("2", "要 —— 标出漏面 / 未绘制的面")],
+                       "1", extra={"y": "2", "yes": "2", "n": "1", "no": "1"})
+    if alpha is None:
+        return
+
+    mode = ask_choice("输出方式",
+                      [("1", "打印到屏幕"),
+                       ("2", "打印到屏幕 + 写入文件"),
+                       ("3", "只写入文件")],
+                      "1", extra={"s": "1", "screen": "1", "b": "2", "both": "2",
+                                  "f": "3", "file": "3"})
+    if mode is None:
+        return
+
+    out = None
+    if mode in ("2", "3"):
+        out = ask_output_file(skinio.default_out_path(src, "_" + kind, ".txt"),
+                              allow_skip=True)
+
+    cmd = f'skintool {kind} "{os.path.basename(src)}" {arm}'
+    if code:
+        cmd += " -c"
+    if alpha == "2":
+        cmd += " -a"
+    if out:
+        cmd += f' -o "{os.path.basename(out)}"'
+    echo_cmd(cmd)
+    run_split(kind, src, arm=arm, code=code, alpha=(alpha == "2"), out=out,
+              also_print=(mode != "3"))
+
+
+def guard(func, *a, **kw):
+    """菜单里执行动作：出错 / 取消都不退出程序，回到菜单。"""
+    try:
+        func(*a, **kw)
+    except Cancelled:
+        print("\n  -> 已取消，返回菜单。")
+    except SystemExit as e:
+        if e.code not in (0, None):
+            print("\n  -> 已取消，返回菜单。")
+    except KeyboardInterrupt:
+        print("\n  -> 已中断，返回菜单。")
+    except Exception as e:                       # 兜底：不让菜单崩掉
+        print(f"\n  [出错] {e}")
 
 
 def interactive():
-    print(MENU)
+    actions = {
+        "1": act_png2txt, "png2txt": act_png2txt, "p2t": act_png2txt,
+        "2": act_txt2png, "txt2png": act_txt2png, "t2p": act_txt2png,
+        "3": lambda: act_split("base"), "base": lambda: act_split("base"),
+        "b": lambda: act_split("base"),
+        "4": lambda: act_split("layers"), "layers": lambda: act_split("layers"),
+        "l": lambda: act_split("layers"),
+    }
     while True:
+        clear_screen()
+        show_menu()
         try:
-            choice = input("请选择: ").strip().lower()
+            choice = input("\n请选择 [1-4 / d / 0]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
-            print()
+            print("\n已退出。")
             return 0
         if choice in ("", "0", "q", "quit", "exit", "退出"):
             print("已退出。")
             return 0
         if choice in ("d", "help", "?", "-h", "--help"):
+            clear_screen()
             build_parser().print_help()
-            print(MENU)
+            pause()
             continue
-        actions = {"1": menu_png2txt, "2": menu_txt2png,
-                   "3": lambda: menu_split("base"),
-                   "4": lambda: menu_split("layers")}
-        action = actions.get(choice) or {
-            "png2txt": menu_png2txt, "p2t": menu_png2txt,
-            "txt2png": menu_txt2png, "t2p": menu_txt2png,
-            "base": lambda: menu_split("base"), "b": lambda: menu_split("base"),
-            "layers": lambda: menu_split("layers"), "l": lambda: menu_split("layers"),
-        }.get(choice)
+        action = actions.get(choice)
         if action is None:
-            print("无效选择，请输入 1-4 / d / 0。")
+            print("  ！无效选择，请输入 1-4 / d / 0。")
+            pause("\n按回车继续…")
             continue
+        clear_screen()
         guard(action)
+        pause()
 
 
 def main(argv=None):
