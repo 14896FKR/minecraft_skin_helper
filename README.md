@@ -70,6 +70,7 @@ python skintool.py layers skin_hex.txt alex -a --out report.txt
 | `txt2png` (`t2p`) | hex grid text | PNG (default `<name>_edited.png`) | `_hex` suffix is stripped |
 | `base` (`b`) | PNG **or** hex text | 6 base parts × 6 faces | Head / Torso / arms / legs |
 | `layers` (`l`) | PNG **or** hex text | 6 overlay parts × 6 faces | Hat / Jacket / sleeves / pants |
+| `merge` (`m`) | a prefix, or 1–2 reports | one skin PNG | finds `<prefix>_base.txt` + `<prefix>_layers.txt`; writes every face back at its UV coordinates |
 
 Run `skintool <command> -h` for everything, or `skintool` with no arguments for the
 interactive menu (pick a command, then pick a file from the current directory by number).
@@ -91,13 +92,15 @@ Without `-c` the faces are printed as raw `#RRGGBBAA` hex.
 ### Interactive menu
 
 Running `skintool` with no arguments (or double-clicking `skintool.cmd`) walks through the
-same four commands:
+same five commands:
 
-1. choose a command (1-4), then pick a file from the current directory **by number** (a full
-   path works too); `0` always goes back;
-2. answer numbered questions — arm model, colour output, opacity stats, and output mode
-   (`1` screen, `2` screen + file, `3` file only). Every question shows its default, and the
-   palette-code option is only offered when a `.gpl` palette is actually available;
+1. choose a command (1-5), then pick a file from the current directory **by number** (a full
+   path works too); `merge` instead lists the report pairs it detected in the current
+   directory and lets you pick one by number; `0` always goes back;
+2. answer numbered questions — arm model, colour output, opacity stats, output mode
+   (`1` screen, `2` screen + file, `3` file only), and for `merge` what to do with pixels no
+   face covers. Every question shows its default, and the palette-code option is only offered
+   when a `.gpl` palette is actually available;
 3. the menu prints the **equivalent CLI command** before running it, then waits for Enter to
    return to a cleared screen — results are never silently scrolled away.
 
@@ -169,6 +172,34 @@ offset by one pixel. The layout matches Blockbench's display.
 (suspected missing face), while `layers` only flags faces that are **entirely**
 transparent (partial transparency is normal for overlays).
 
+## Merging the two reports back into a PNG
+
+`base` + `layers` reports are the other half of the round trip: edit them (by hand or with
+an LLM) and rebuild one complete skin PNG from both — selected by **file prefix**:
+
+```bat
+skintool base   skin.png slim -o skin_base.txt
+skintool layers skin.png slim -o skin_layers.txt
+skintool merge  skin                    :: -> skin_merged.png
+skintool merge  skin --fill skin.png    :: keep the original pixels where no face covers them
+```
+
+- The prefix picks up `skin_base.txt` + `skin_layers.txt`. Variants are accepted too:
+  `-base` / `-layers`, `base` / `layers`, `overlay`, `_layer`, case-insensitively, `.txt` or
+  `.hex`. You can also pass one file (its partner is found by prefix) or two explicit files
+  (drawn in the given order, later wins).
+- Every face is written at the coordinates in its own `--- Part face (x,y wxh) ---` heading,
+  so the report always wins over any assumption about the layout. Reports whose arm models
+  disagree still merge, but a warning is printed.
+- Both report flavours are accepted: hex (`#RRGGBBAA`) and palette codes (`-c`), the latter
+  reconstructed through the same `.gpl` palette (codes of any length, matched exactly).
+  A PNG or a plain hex grid can be one of the inputs as well.
+- Pixels no face covers stay transparent by default; `--fill skin.png` keeps the original
+  content there instead. Palette codes missing from the palette are reported loudly with
+  their counts and left transparent — never silently turned into black.
+- The round trip is lossless: rebuilding from reports extracted out of a skin reproduces that
+  skin **pixel for pixel** (verified on 64x64 and 128x128, hex and code mode, wide and slim).
+
 ## Limitations
 
 LLM editing works best on the smaller textures: a `64x64` skin is roughly 35k tokens, and
@@ -198,13 +229,20 @@ Original `skin_editor.py` and upstream docs © 2025 EinMaulwurf; `skintool.py` /
 ```bat
 skintool png2txt 皮肤.png                 :: PNG → hex 文本（发 LLM 改色）
 skintool txt2png 皮肤_hex.txt             :: 改完的文本 → PNG
-skintool base    皮肤.png slim -a         :: 底层各部位/面（-a = 漏面统计）
-skintool layers  皮肤.png -s              :: 第二层（-s = 纤细/Alex 手臂）
+skintool base    皮肤.png slim -a -o 前缀_base.txt     :: 底层各部位/面（-a = 漏面统计）
+skintool layers  皮肤.png -s    -o 前缀_layers.txt     :: 第二层（-s = 纤细/Alex 手臂）
+skintool merge   前缀                     :: 前缀_base.txt + 前缀_layers.txt → 前缀_merged.png
 skintool base    皮肤.png -c -p 调色板.gpl :: 调色板代号输出（需自备 .gpl）
 skintool                                  :: 不带参数 = 交互菜单（双击 skintool.cmd）
 ```
 
-- **菜单怎么走**：选命令（1-4）→ 按序号选当前目录里的文件（也可粘完整路径）→
+- **合并（merge）**：把两份部位报告按报告里写的 UV 坐标写回一张皮肤 PNG。
+  只给前缀就自动找 `前缀_base.txt` + `前缀_layers.txt`（也认 `-base`/`overlay` 等写法）；
+  也可以给一个文件（按前缀配另一个）或直接给两个文件（按顺序叠加）。
+  没被任何面覆盖的像素默认留透明，加 `--fill 前缀.png` 就保留原图那些位置；
+  代号报告用当初那份 `.gpl`（加 `-p`），调色板里没有的代号会**明确报出数量**并留透明，
+  不会悄悄涂黑。实测：从皮肤提取出的两份报告再合并，能**逐像素还原原皮肤**（64×64 / 128×128 均通过）。
+- **菜单怎么走**：选命令（1-5）→ 按序号选当前目录里的文件 / 报告前缀（也可粘完整路径）→
   手臂类型 → 颜色输出 → 不透明统计 → 输出方式（`1` 打印到屏幕 / `2` 屏幕+写文件 /
   `3` 只写文件）。每题都标了默认值，**任何一步输 `0` 都能返回**；跑之前会打印
   「等价命令」，跑完按回车清屏回菜单，结果不会被刷掉。
