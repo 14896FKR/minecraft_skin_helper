@@ -29,14 +29,12 @@
     -o FILE     完整输出写入文件（缺省打到屏幕）
     --size 64|128   强制尺寸（默认按输入自动探测）
 
-参数速记（merge；挑文件有三种方式）:
-    skintool merge <前缀>            默认按前缀：前缀_base.txt + 前缀_layers.txt
+参数速记（merge；挑文件有三种方式，菜单里还可混合挑）:
+    skintool merge <前缀>            默认按前缀：前缀_base + 前缀_layers（菜单里选号即成对）
     skintool merge 甲.txt 乙.txt     直接给两份报告（按顺序叠加，后写覆盖先写）
-    skintool merge --suffix _base,_layers   按后缀扫描当前目录的 .txt / .hex
-                                    （只给一个后缀时需要恰好命中 2 个文件）
+    skintool merge --scan            按内置后缀集合（_base / _layers / _layer / overlay …）扫描
     skintool merge --any             宽松扫描：目录里全部 .txt / .hex，恰好 2 个时直接用
-                                    （文件名没有 _base/_layers 特征时用这两种；交互菜单里
-                                     还能列出全部候选自己挑两份）
+    （--scan / --any 在候选不止 2 个时会列出候选并报错；交互菜单里可以自己挑、还能混合挑）
     -o FILE     输出 PNG（默认 前缀_merged.png）
     --fill PNG  未覆盖区域从该 PNG 保留原样（默认留透明）
     -p FILE     代号报告的调色板；--size 强制画布尺寸
@@ -63,6 +61,8 @@ ALIASES = {
 BASE_SUFFIXES = ("_base", "base", "-base", "_bottom")
 LAYER_SUFFIXES = ("_layers", "_layer", "layers", "-layers", "_overlay", "overlay")
 TEXT_EXTS = (".txt", ".hex")
+# 已知后缀的合集：菜单「按后缀扫描」直接用这个集合，不需要用户手输
+KNOWN_SUFFIXES = BASE_SUFFIXES + LAYER_SUFFIXES
 
 
 class Cancelled(Exception):
@@ -328,15 +328,17 @@ def list_prefix_pairs(folder):
     return pairs
 
 
-def scan_text_files(folder, suffix=None):
-    """扫描目录里的 .txt / .hex（宽松模式用）。
+def scan_text_files(folder, suffixes=None):
+    """扫描目录里的 .txt / .hex（按固定顺序，作为编号基准）。
 
-    suffix 给定时只保留以它结尾的文件名（不区分大小写，如 "_base"、"_layer"）。
+    suffixes 给定时只保留文件名以其中任一后缀结尾的（不区分大小写，
+    如内置集合 ("_base", "_layers", "_layer", ...)）。
     """
     try:
         names = sorted(os.listdir(folder))
     except OSError:
         return []
+    wanted = tuple(s.lower() for s in suffixes) if suffixes else None
     out = []
     for name in names:
         path = os.path.join(folder, name)
@@ -345,10 +347,22 @@ def scan_text_files(folder, suffix=None):
         stem, ext = os.path.splitext(name)
         if ext.lower() not in TEXT_EXTS:
             continue
-        if suffix and not stem.lower().endswith(suffix.lower()):
+        if wanted and not stem.lower().endswith(wanted):
             continue
         out.append(path)
     return out
+
+
+def suffix_tag(name):
+    """文件名带的是哪个已知后缀（用于菜单标注）。没有则返回空串。"""
+    stem = os.path.splitext(name)[0].lower()
+    for suffix in BASE_SUFFIXES:
+        if stem.endswith(suffix) and len(stem) > len(suffix):
+            return f"底层 {suffix}"
+    for suffix in LAYER_SUFFIXES:
+        if stem.endswith(suffix) and len(stem) > len(suffix):
+            return f"第二层 {suffix}"
+    return ""
 
 
 def describe_text_file(path):
@@ -377,54 +391,111 @@ def describe_text_file(path):
     return f"整幅 hex 网格 {width}x{height}"
 
 
-def pick_from_list(files, prompt, title="", taken=None):
-    """把文件列表编号显示，让用户挑一个（也可粘路径）。返回路径或 None。
+def _same_path(a, b):
+    """两个路径是否指向同一个文件（大小写不敏感，Windows 友好）。"""
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
-    列表编号在整个挑选过程里保持不变；taken 指向已选过的文件时标注出来并拒绝重复选择
-    （避免「第二个列表重新编号后按序号选错文件」这种坑）。
+
+def pick_merge_file(folder, prompt, taken=None, suffixes=None):
+    """挑一份合并输入 —— 支持**混合挑选**。
+
+    每次提问前都重印当前列表，编号就是这份列表的 1..N（不会出现「编号看不见」的错位）。
+    可输入：
+        序号            从当前显示的（过滤后）列表里选
+        完整路径        直接指定目录外 / 别处的文件
+        *_base / Crown* 通配过滤（大小写不敏感），*base* 也可以
+        普通词          子串过滤，如输入 base 会列出名字含 base 的文件
+        a / all         清除过滤，列出全部 .txt / .hex
+        0 / 回车        返回
     """
-    if not files:
-        print("  ！（这个条件下没有找到 .txt / .hex 文件）")
+    master = scan_text_files(folder)
+    if not master:
+        print("  ！（当前目录没有 .txt / .hex 文件）")
         return None
-    if title:
-        print(f"\n  {title}")
-    for i, path in enumerate(files, 1):
-        mark = "   <- 已选作第一个" if taken and _same_path(path, taken) else ""
-        print(f"    {i}) {os.path.basename(path):<34} {describe_text_file(path)}{mark}")
+    active = tuple(suffixes) if suffixes else None
+
     while True:
+        shown = master if not active else [
+            p for p in master
+            if os.path.splitext(p)[0].lower().endswith(tuple(s.lower() for s in active))]
+        head = "当前目录的 .txt / .hex"
+        head += f"（按内置后缀过滤：{' / '.join(active)}）" if active else "（全部）"
+        print(f"\n  {head}    共 {len(shown)} 个")
+        if not shown:
+            print("    （没有匹配的文件 —— 输入 a 列出全部，或直接粘路径）")
+        for i, path in enumerate(shown, 1):
+            tag = suffix_tag(os.path.basename(path))
+            mark = "   <- 已选作第一个" if taken and _same_path(path, taken) else ""
+            print(f"    [{i:>2}] {os.path.basename(path):<32} {describe_text_file(path)}"
+                  + (f"  {tag}" if tag else "") + mark)
+
         try:
-            raw = input(f"\n{prompt}（序号 / 完整路径，0 = 返回）: ").strip().strip('"')
+            raw = input(f"\n{prompt}（序号 / 路径 / 过滤如 *_base、Crown* / a=全部 / 0=返回）: "
+                        ).strip().strip('"')
         except (EOFError, KeyboardInterrupt):
             print()
             return None
         if raw in ("", "0", "q", "back", "返回"):
             return None
-        picked = None
-        if raw.isdigit() and 1 <= int(raw) <= len(files):
-            picked = files[int(raw) - 1]
+        if raw.lower() in ("a", "all", "全部", "*"):
+            active = None
+            continue
+
+        if raw.isdigit():
+            index = int(raw)
+            if not (1 <= index <= len(shown)):
+                print(f"  ！序号要在 1-{len(shown)} 之间（上面方括号里的编号）。")
+                continue
+            picked = shown[index - 1]
         elif os.path.isfile(raw):
             picked = os.path.abspath(raw)
-        if picked is None:
-            print("  ！找不到这个文件，请重输（0 = 返回）。")
-            continue
+        else:
+            import fnmatch
+            pattern = raw if "*" in raw or "?" in raw else f"*{raw}*"
+            # 同时匹配「文件名」与「去掉扩展名的名字」，这样 *_base 也能命中 skin_base.txt
+            hits = [p for p in master
+                    if fnmatch.fnmatch(os.path.basename(p).lower(), pattern.lower())
+                    or fnmatch.fnmatch(os.path.splitext(os.path.basename(p))[0].lower(),
+                                       pattern.lower())]
+            if not hits:
+                print(f"  ！没有文件名匹配 {raw!r}（输入 a 列出全部，或直接粘路径）。")
+                continue
+            print(f"\n  {len(hits)} 个文件匹配 {raw!r}：")
+            for i, path in enumerate(hits, 1):
+                tag = suffix_tag(os.path.basename(path))
+                mark = "   <- 已选作第一个" if taken and _same_path(path, taken) else ""
+                print(f"    [{i:>2}] {os.path.basename(path):<32} {describe_text_file(path)}"
+                      + (f"  {tag}" if tag else "") + mark)
+            try:
+                raw2 = input("\n选择序号（0 = 换个过滤）: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return None
+            if raw2 in ("", "0", "q", "返回"):
+                continue
+            if raw2.lower() in ("a", "all", "全部"):
+                active = None
+                continue
+            if not (raw2.isdigit() and 1 <= int(raw2) <= len(hits)):
+                print(f"  ！序号要在 1-{len(hits)} 之间。")
+                continue
+            picked = hits[int(raw2) - 1]
+
         if taken and _same_path(picked, taken):
             print("  ！这个已经选作第一个文件了，请挑另一个。")
             continue
         return picked
 
 
-def _same_path(a, b):
-    """两个路径是否指向同一个文件（大小写不敏感，Windows 友好）。"""
-    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+def resolve_merge_inputs(raw, suffix=None, any_file=False, scan=False):
+    """merge 的输入解析（命令行）：
 
-
-def resolve_merge_inputs(raw, suffix=None, any_file=False):
-    """merge 的输入解析，四种来源：
-
-    1. 两个（或更多时取前两个）显式文件；
+    1. 两个（更多时取前两个）显式文件；
     2. 单个文件 -> 按前缀配另一个；单个前缀 -> 找 前缀_base + 前缀_layers；
-    3. suffix（`--suffix _base,_layers`）-> 按后缀扫描（每个后缀必须唯一命中）；
-    4. any_file（`--any`）-> 宽松扫描目录里全部 .txt / .hex（恰好两个才自动采用）。
+    3. scan（`--scan`）    -> 用**内置后缀集合**（_base / _layers / _layer / overlay …）扫；
+    4. any_file（`--any`） -> 宽松扫目录里全部 .txt / .hex；
+    5. suffix（`--suffix 自定义`）-> 进阶：自己指定后缀（一般用不上）。
+    3/4 都要求恰好两个候选才自动采用，否则列出候选报错。
     """
     raw = [p for p in (raw or []) if p]
     if len(raw) >= 2:
@@ -443,26 +514,20 @@ def resolve_merge_inputs(raw, suffix=None, any_file=False):
                 skinio.die("错误：请给前缀（如 Crown_optimized）、一个文件，或两个文件路径。")
         return find_prefix_pair(folder, prefix)
 
-    if suffix:
-        wanted = [s.strip() for s in suffix.split(",") if s.strip()]
-        if len(wanted) == 1:                 # 一个后缀 -> 需要恰好两份匹配
-            found = scan_text_files(folder, wanted[0])
-            if len(found) == 2:
-                return found
-            skinio.die(f"错误：按后缀 {wanted[0]!r} 在 {folder} 里找到 {len(found)} 个文件"
-                       + ("：" + "、".join(os.path.basename(p) for p in found) if found else "")
-                       + "；需要恰好 2 个（或写成「后缀1,后缀2」分别筛两份）。")
-        if len(wanted) == 2:
-            picked = []
-            for item in wanted:
-                found = scan_text_files(folder, item)
-                if len(found) != 1:
-                    skinio.die(f"错误：按后缀 {item!r} 在 {folder} 里找到 {len(found)} 个文件"
-                               + ("：" + "、".join(os.path.basename(p) for p in found) if found else "")
-                               + "；该后缀必须唯一命中。")
-                picked.append(found[0])
-            return picked
-        skinio.die("错误：--suffix 只接受 1 个或 2 个后缀（逗号分隔，如 _base,_layers）。")
+    if scan or suffix:
+        if suffix:
+            wanted = tuple(s.strip() for s in suffix.split(",") if s.strip())
+            label = "自定义后缀 " + "、".join(wanted)
+        else:
+            wanted = tuple(KNOWN_SUFFIXES)
+            label = "内置后缀 " + "、".join(wanted)
+        found = scan_text_files(folder, wanted)
+        if len(found) == 2:
+            return found
+        skinio.die(f"错误：按{label} 在 {folder} 里找到 {len(found)} 个文件"
+                   + ("：" + "、".join(os.path.basename(p) for p in found) if found else "")
+                   + "；需要恰好 2 个才能自动采用。请显式给前缀或两个文件，"
+                     "或在交互菜单里挑（菜单支持混合挑选）。")
 
     if any_file:
         found = scan_text_files(folder)
@@ -652,8 +717,8 @@ def build_parser():
                         description="按报告里的 UV 坐标把两份部位报告合并回一张皮肤 PNG；"
                                     "也接受 hex 网格或 PNG 作为其中一份。")
     p5.add_argument("inputs", nargs="*", metavar="前缀|文件",
-                    help="留空则配合 --suffix / --any 扫描。默认按前缀：给前缀（如 Crown_optimized）"
-                         "自动找 前缀_base.txt + 前缀_layers.txt；也可给一个文件（按前缀配另一个）"
+                    help="留空则配合 --scan / --any 扫描。默认按前缀：给前缀（如 Crown_optimized）"
+                         "自动找 前缀_base + 前缀_layers；也可给一个文件（按前缀配另一个）"
                          "或两个文件（按顺序叠加）")
     p5.add_argument("-o", "--out", metavar="FILE",
                     help="输出 PNG（默认 前缀_merged.png）")
@@ -663,11 +728,13 @@ def build_parser():
                     help="代号报告用的 GPL 调色板（缺省自动探测）")
     p5.add_argument("--fill", metavar="PNG",
                     help="未覆盖区域从该 PNG 保留原样（默认留透明）")
-    p5.add_argument("--suffix", metavar="后缀[,后缀]",
-                    help="按后缀扫描当前目录的 .txt / .hex（如 --suffix _base,_layers；"
-                         "只给一个后缀时需要恰好命中 2 个文件）")
+    p5.add_argument("--scan", action="store_true",
+                    help="按**内置后缀集合**（" + " / ".join(KNOWN_SUFFIXES) + "）扫描当前目录，"
+                         "恰好 2 个候选时直接用（不用自己输后缀）")
     p5.add_argument("--any", action="store_true",
                     help="宽松扫描：当前目录全部 .txt / .hex（恰好 2 个时直接用；否则列出候选）")
+    p5.add_argument("--suffix", metavar="后缀[,后缀]",
+                    help="进阶：自定义后缀扫描（一般不用，默认请用 --scan）")
     return parser
 
 
@@ -700,7 +767,7 @@ def cli(argv):
         run_txt2png(args.file, args.out)
     elif command == "merge":
         merge_inputs(resolve_merge_inputs(args.inputs, suffix=args.suffix,
-                                          any_file=args.any),
+                                          any_file=args.any, scan=args.scan),
                      out=args.out, size=args.size,
                      palette=args.palette, fill=args.fill)
     else:
@@ -813,27 +880,35 @@ def act_split(kind):
 
 
 def pick_merge_pair(folder):
-    """让用户挑出要合并的两份报告（三种配对方式）。返回 [甲, 乙] 或 None。
+    """让用户挑出要合并的两份报告，返回 [甲, 乙] 或 None。
 
-    [1] 按前缀（默认）—— 前缀_base.txt + 前缀_layers.txt，自动成对
-    [2] 按后缀扫描   —— 输入后缀（如 _base / _bottom / _layer），列出带该后缀的 txt
-    [3] 宽松扫描     —— 列出目录里所有 .txt / .hex，自己挑两份（文件名没特征也能选到）
+    三种方式（后缀是**内置已知集合**，不需要手输）：
+    [1] 按前缀（默认）—— 前缀_base + 前缀_layers，选号即成一對
+    [2] 按内置后缀     —— 列出带 _base / _layers / _layer / overlay … 的文件，挑两份
+    [3] 宽松扫描       —— 列出目录里全部 .txt / .hex，挑两份
+
+    三个方式里挑文件都用同一个选择器，因此**可以混合**：第一个按后缀挑，
+    第二个可以改用通配过滤（如 *_layer）、前缀过滤（如 Crown*）、粘路径或 a=全部；
+    反过来也一样。编号始终对应「全目录 txt」的固定顺序，不会因过滤而错位。
     """
     pairs = list_prefix_pairs(folder)
+    master = scan_text_files(folder)
+    by_suffix = scan_text_files(folder, KNOWN_SUFFIXES)
     print()
     if pairs:
         print(f"  按前缀找到 {len(pairs)} 组报告对:")
         for i, (prefix, base, layers) in enumerate(pairs, 1):
             print(f"    {i}) {prefix:<20} （{os.path.basename(base)} + {os.path.basename(layers)}）")
     else:
-        print("  （当前目录没有 *_base.txt + *_layers.txt 这样成对的文件）")
-    all_txt = scan_text_files(folder)
-    print(f"  当前目录共 {len(all_txt)} 个 .txt / .hex 可作为合并输入")
+        print("  （当前目录没有 *_base + *_layers 这样成对的文件）")
+    print(f"  带内置后缀（{' / '.join(KNOWN_SUFFIXES[:6])} …）的文件 {len(by_suffix)} 个；"
+          f"目录里 .txt / .hex 共 {len(master)} 个")
 
     mode = ask_choice("配对方式",
                       [("1", "按前缀（前缀_base + 前缀_layers，自动配对）"),
-                       ("2", "按后缀扫描 —— 输入后缀，列出带该后缀的 txt 再挑"),
-                       ("3", "宽松扫描 —— 列出全部 txt，自己挑两份")],
+                       ("2", f"按内置后缀扫描 —— 列出带 "
+                             f"{' / '.join(KNOWN_SUFFIXES[:4])} … 的文件，挑两份"),
+                       ("3", "宽松扫描 —— 列出全部 .txt / .hex，挑两份")],
                       "1", extra={"p": "1", "prefix": "1", "s": "2", "suffix": "2",
                                   "a": "3", "any": "3", "all": "3"})
     if mode is None:
@@ -841,49 +916,26 @@ def pick_merge_pair(folder):
 
     if mode == "1":
         try:
-            raw = input("\n选择前缀（序号 / 前缀 / 两个文件路径，0 = 返回）: ").strip().strip('"')
+            raw = input("\n选择报告对（序号 / 前缀 / 两个文件路径 / m=手动挑两个，0 = 返回）: "
+                        ).strip().strip('"')
         except (EOFError, KeyboardInterrupt):
             print()
             return None
         if raw in ("", "0", "q", "back", "返回"):
             return None
-        if raw.isdigit() and pairs and 1 <= int(raw) <= len(pairs):
+        if raw.lower() in ("m", "mix", "手动", "混合"):
+            mode = "3"                       # 落到混合挑选（不带后缀过滤）
+        elif raw.isdigit() and pairs and 1 <= int(raw) <= len(pairs):
             prefix, base, layers = pairs[int(raw) - 1]
             return [base, layers]
-        return resolve_merge_inputs(raw.replace(",", " ").split())
+        else:
+            return resolve_merge_inputs(raw.replace(",", " ").split())
 
-    if mode == "2":
-        try:
-            first_suffix = input("\n第一个文件的后缀（如 _base / _bottom，0 = 返回）: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return None
-        if first_suffix in ("", "0", "q", "返回"):
-            return None
-        first = pick_from_list(scan_text_files(folder, first_suffix),
-                               "第一个文件", title=f"带后缀 {first_suffix!r} 的文件")
-        if not first:
-            return None
-        try:
-            second_suffix = input(f"\n第二个文件的后缀（回车 = 还用 {first_suffix}；"
-                                  f"也可输入别的如 _layers，0 = 返回）: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return None
-        if second_suffix in ("0", "q", "返回"):
-            return None
-        second_suffix = second_suffix or first_suffix
-        second = pick_from_list(scan_text_files(folder, second_suffix),
-                                "第二个文件", title=f"带后缀 {second_suffix!r} 的文件")
-        if not second:
-            return None
-        return [first, second]
-
-    first = pick_from_list(all_txt, "第一个文件", title="当前目录全部 .txt / .hex")
+    default_suffixes = KNOWN_SUFFIXES if mode == "2" else None
+    first = pick_merge_file(folder, "第一个文件", suffixes=default_suffixes)
     if not first:
         return None
-    second = pick_from_list(all_txt, "第二个文件",
-                            title="当前目录全部 .txt / .hex（编号同上）", taken=first)
+    second = pick_merge_file(folder, "第二个文件", taken=first, suffixes=default_suffixes)
     if not second:
         return None
     return [first, second]
