@@ -188,21 +188,36 @@ skintool merge  skin --fill skin.png    :: keep the original pixels where no fac
   `.txt` whose name starts with `skin` — nothing has to be called `_base` or `_layers`. The same
   goes the other way: `skintool merge --suffix _partA` filters by that suffix alone. Only `.txt`
   files are ever considered. Two explicit files also work (drawn in the given order, later wins).
+  In the menu you never have to guess a name: it groups the folder's files and lists the real
+  prefixes / suffixes it found.
 
   | Starting filter | CLI | Interactive menu |
   |---|---|---|
-  | by prefix | `skintool merge skin` (used when exactly two names start with it, else the candidates are listed) | `[1]` — type a prefix, then pick two from that list |
-  | by suffix | `skintool merge --scan` (default suffix set: `_base` / `_layers` / `_layer` / `overlay` …; `--suffix _a,_b` for your own) | `[2]` — Enter keeps the default suffix set, or type any suffix |
+  | by prefix | `skintool merge skin` (used when exactly two names start with it, else the candidates are listed) | `[1]` — lists the prefixes that exist in this directory, pick one by number |
+  | by suffix | `skintool merge --scan` (default suffix set: `_base` / `_layers` / `_layer` / `overlay` …; `--suffix _a,_b` for your own) | `[2]` — lists the suffixes that exist here; Enter = the default set, or pick/type one |
   | everything | `skintool merge --any` (same rule: exactly two, else list them) | `[3]` — lists every `.txt` |
 
-  Both picks use the **same picker**, so they can be **mixed**: start from the suffix list, then
-  switch the second pick to a prefix, a wildcard (`*_layer`, `Crown*`), `a` for everything, or a
-  pasted path — and the other way round.
+  Nothing is hard-coded and no name is assumed: the menu always lists what is actually in the
+  folder, e.g.
 
   ```
-  起始方式 [1]: 2
-  第一个文件（序号 / 过滤 / a / 0）: 3
-  第二个文件（序号 / 过滤 / a / 0）: Crow*        <- 换了过滤，这就是混合
+    [ 1] 按前缀（列出本目录已有的前缀）   <- 默认
+    [ 2] 按后缀（列出本目录已有的后缀）
+    [ 3] 全部 txt
+
+  起始方式（回车 = 1，0 = 返回）: 1
+    [ 1] Crow_35          2 个: Crow_35_base.txt、Crow_35_layers.txt
+    [ 2] Crown            2 个: Crown_base.txt、Crown_layers.txt
+  选择前缀（序号 / 直接输入，0 = 返回）: 1
+  ```
+
+  Both picks use the **same picker**, so they can be **mixed**: start from the suffix list, then
+  switch the second pick to a prefix, a wildcard (`*_layers`), `a` for everything, or a pasted
+  path — and the other way round.
+
+  ```
+  第一个文件（序号 / 过滤 / a=全部 / 0=返回）: 1
+  第二个文件（序号 / 过滤 / a=全部 / 0=返回）: *_layers    <- 换了过滤，这就是混合
   ```
 
   Each line shows what the file is (`36 面` / `36 面（代号）` / `整幅 64x64`), the file already
@@ -257,11 +272,11 @@ skintool                                  :: 不带参数 = 交互菜单（双�
 ```
 
 - **合并（merge）**：把两份部位报告按报告里写的 UV 坐标写回一张皮肤 PNG。挑文件三种起手方式：
-  ① **按前缀**（`skintool merge Crow_35` / 菜单 `[1]`）—— 列出**以该前缀开头**的 txt，
-  不要求文件叫 `_base`/`_layers`；② **按后缀**（`--scan` 或 `--suffix _partA` / 菜单 `[2]`，
-  回车就用默认后缀集合 `_base`/`_layers`/`_layer`/`overlay`…）；③ **全部**（`--any` / 菜单 `[3]`）。
-  两次挑选用同一个选择器，可**混合**：第一个从后缀列表选，第二个换成前缀、通配（`*_layer`、
-  `Crown*`）、`a`（全部）或直接粘路径。只认 `.txt`。
+  ① **按前缀**（`skintool merge 前缀` / 菜单 `[1]`，菜单会**列出本目录已有的前缀**让你选号）；
+  ② **按后缀**（`--scan` 或 `--suffix 后缀` / 菜单 `[2]`，同样列出已有后缀，回车 = 默认集合）；
+  ③ **全部**（`--any` / 菜单 `[3]`）。提示文字通用、不写死任何文件名。
+  两次挑选用同一个选择器，可**混合**：第一个从后缀列表选，第二个换成前缀、通配（`*_layers`）、
+  `a`（全部）或直接粘路径。只认 `.txt`。
   没被任何面覆盖的像素默认留透明，加 `--fill 前缀.png` 就保留原图那些位置；
   代号报告用当初那份 `.gpl`（加 `-p`），调色板里没有的代号会**明确报出数量**并留透明。
   实测：从皮肤提取出的两份报告再合并，能**逐像素还原原皮肤**。

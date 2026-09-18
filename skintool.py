@@ -255,7 +255,7 @@ def run_split(kind, src, arm="wide", code=False, palette=None, alpha=False,
 
 # ------------------------------------------------- 合并两份报告（或网格）成 PNG
 def prefix_of(path):
-    """从文件名推断皮肤前缀：Crown_optimized_base.txt -> Crown_optimized。"""
+    """从文件名推断皮肤前缀：<前缀>_base.txt -> <前缀>（去掉已知后缀）。"""
     stem = os.path.splitext(os.path.basename(path))[0]
     low = stem.lower()
     for suffix in BASE_SUFFIXES + LAYER_SUFFIXES:
@@ -321,6 +321,72 @@ def _same_path(a, b):
     return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
+def split_stem(stem):
+    """文件名（去扩展名）-> (前缀, 后缀)。
+
+    skin_base -> ("skin", "_base")；skin_layers -> ("skin", "_layers")；
+    myskin-partA -> ("myskin", "-partA")；skin -> ("skin", "")。
+    先按已知后缀切，再退回「最后一个 _ / - / . 之后」的通用规则。
+    """
+    low = stem.lower()
+    for suffix in KNOWN_SUFFIXES:
+        if low.endswith(suffix) and len(stem) > len(suffix):
+            return stem[:len(stem) - len(suffix)], stem[len(stem) - len(suffix):]
+    for sep in ("_", "-", "."):
+        index = stem.rfind(sep)
+        if 0 < index < len(stem) - 1:
+            return stem[:index], stem[index:]
+    return stem, ""
+
+
+def detect_prefixes(folder):
+    """按前缀把目录里的 txt 归组 -> [(前缀, [文件…])]，按名字排序。"""
+    groups = {}
+    for path in scan_text_files(folder):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        prefix, _ = split_stem(stem)
+        groups.setdefault(prefix, []).append(path)
+    return sorted(groups.items(), key=lambda kv: kv[0].lower())
+
+
+def detect_suffixes(folder):
+    """按后缀把目录里的 txt 归组 -> [(后缀, [文件…])]，按名字排序。"""
+    groups = {}
+    for path in scan_text_files(folder):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        _, suffix = split_stem(stem)
+        if suffix:
+            groups.setdefault(suffix, []).append(path)
+    return sorted(groups.items(), key=lambda kv: kv[0].lower())
+
+
+def ask_from_groups(groups, prompt, default_keys=(), default_result=None):
+    """把「分组」（前缀或后缀）编号列出让用户选，也可直接输入自己的。
+
+    返回：选中的键（str）／回车且给了 default_result 时返回它／取消返回 None。
+    """
+    print()
+    for i, (key, files) in enumerate(groups, 1):
+        names = "、".join(os.path.basename(p) for p in files[:3])
+        if len(files) > 3:
+            names += f"… 等 {len(files)} 个"
+        mark = "   <- 默认" if key in default_keys else ""
+        print(f"    [{i:>2}] {key:<16} {len(files)} 个: {names}{mark}")
+    hint = "回车 = 默认集合 / 序号 / 直接输入" if default_result else "序号 / 直接输入"
+    try:
+        raw = input(f"\n{prompt}（{hint}，0 = 返回）: ").strip().strip('"')
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    if raw in ("0", "q", "back", "返回"):
+        return None
+    if not raw:
+        return default_result
+    if raw.isdigit() and 1 <= int(raw) <= len(groups):
+        return groups[int(raw) - 1][0]
+    return raw
+
+
 def pick_merge_file(folder, prompt, taken=None, prefixes=None, suffixes=None):
     """挑一份合并输入。
 
@@ -329,7 +395,7 @@ def pick_merge_file(folder, prompt, taken=None, prefixes=None, suffixes=None):
     接受的输入：
         序号     从当前列表（提问前都会重印）里选
         路径     直接指定别处的文件
-        文字     前缀（Crow_35）、后缀（_base）、通配（*_layer、Crown*）都能当过滤器
+        文字     前缀、后缀、通配（*x、x*）都能当过滤器
         a        看全部 txt
         0        返回
     """
@@ -342,13 +408,15 @@ def pick_merge_file(folder, prompt, taken=None, prefixes=None, suffixes=None):
 
     while True:
         shown = scan_text_files(folder, prefixes=pref, suffixes=suf) if (pref or suf) else master
-        what = []
+        label = []
         if pref:
-            what.append("前缀 " + " / ".join(pref))
+            label.append("前缀 " + " / ".join(list(pref)[:2])
+                         + (f" 等 {len(pref)} 项" if len(pref) > 2 else ""))
         if suf:
-            what.append("后缀 " + " / ".join(suf))
-        print(f"\n  {'（'.join(['txt'] + what)}{'）' if what else ''} 共 {len(shown)} 个"
-              if what else f"\n  全部 txt 共 {len(shown)} 个")
+            label.append("后缀 " + " / ".join(list(suf)[:2])
+                         + (f" 等 {len(suf)} 项" if len(suf) > 2 else ""))
+        head = "、".join(label) if label else "全部"
+        print(f"\n  txt（{head}） 共 {len(shown)} 个")
         if not shown:
             print("    （没有匹配 —— 换个过滤，或输 a 看全部）")
         for i, path in enumerate(shown, 1):
@@ -356,7 +424,7 @@ def pick_merge_file(folder, prompt, taken=None, prefixes=None, suffixes=None):
             print(f"    [{i:>2}] {os.path.basename(path):<32} {describe_text_file(path)}{mark}")
 
         try:
-            raw = input(f"\n{prompt}（序号 / 过滤 / a / 0）: ").strip().strip('"')
+            raw = input(f"\n{prompt}（序号 / 过滤 / a=全部 / 0=返回）: ").strip().strip('"')
         except (EOFError, KeyboardInterrupt):
             print()
             return None
@@ -441,7 +509,7 @@ def resolve_merge_inputs(raw, suffix=None, any_file=False, scan=False):
             folder = os.path.dirname(one) or os.getcwd()
             prefix = os.path.basename(one.rstrip("\\/"))
             if not prefix:                   # 只给了目录
-                skinio.die("错误：请给前缀（如 Crow_35）、一个文件，或两个文件路径。")
+                skinio.die("错误：请给前缀（皮肤名的开头部分）、一个文件，或两个文件路径。")
         found = scan_text_files(folder, prefixes=(prefix,))
         if len(found) == 2:
             return found
@@ -648,7 +716,7 @@ def build_parser():
                         description="按报告里的 UV 坐标把两份部位报告合并回一张皮肤 PNG；"
                                     "也接受 hex 网格或 PNG 作为其中一份。")
     p5.add_argument("inputs", nargs="*", metavar="前缀|文件",
-                    help="留空则配合 --scan / --any。给前缀（如 Crow_35）＝列出以它开头的 txt，"
+                    help="留空则配合 --scan / --any。给前缀＝列出以它开头的 txt，"
                          "不要求后缀叫 _base/_layers；也可给一个文件（按前缀配另一个）"
                          "或两个文件（按顺序叠加）")
     p5.add_argument("-o", "--out", metavar="FILE",
@@ -813,11 +881,10 @@ def act_split(kind):
 def pick_merge_pair(folder):
     """挑出要合并的两份 txt，返回 [甲, 乙] 或 None。
 
-    三种起点（都只是「起始过滤」）：
-    [1] 按前缀 —— 输入前缀（如 Crow_35），列出以它开头的 txt；不要求叫 _base/_layers
-    [2] 按后缀 —— 列出以默认后缀（_base / _layers / _layer / overlay …）结尾的 txt
-    [3] 全部   —— 列出目录里所有 txt
-    两个文件用同一个选择器挑，所以可以混着来：第一个按后缀挑，第二个改成前缀/通配/全部。
+    三种起点（都只是「起始过滤」，之后两个文件还能各自换过滤）：
+    [1] 按前缀 —— 列出本目录里**已有的前缀**（按文件名自动分组），选号即可
+    [2] 按后缀 —— 列出本目录里**已有的后缀**，选号即可（回车 = 默认后缀集合）
+    [3] 全部   —— 目录里所有 txt
     """
     all_txt = scan_text_files(folder)
     print()
@@ -825,11 +892,10 @@ def pick_merge_pair(folder):
         print("  ！当前目录没有 txt 文件。")
         return None
     print(f"  目录里 txt 共 {len(all_txt)} 个")
-    print("  提示：挑文件时可随时换过滤 —— 前缀 Crow_35、后缀 _base、通配 *_layer、a=全部。")
 
     mode = ask_choice("起始方式",
-                      [("1", "按前缀（输入前缀，列出以它开头的 txt）"),
-                       ("2", f"按后缀（默认 {' / '.join(KNOWN_SUFFIXES[:3])}）"),
+                      [("1", "按前缀（列出本目录已有的前缀）"),
+                       ("2", "按后缀（列出本目录已有的后缀）"),
                        ("3", "全部 txt")],
                       "1", extra={"p": "1", "prefix": "1", "s": "2", "suffix": "2",
                                   "a": "3", "any": "3", "all": "3"})
@@ -838,24 +904,24 @@ def pick_merge_pair(folder):
 
     prefixes = suffixes = None
     if mode == "1":
-        try:
-            raw = input("\n前缀（如 Crow_35，0 = 返回）: ").strip().strip('"')
-        except (EOFError, KeyboardInterrupt):
-            print()
+        groups = detect_prefixes(folder)
+        if not groups:
+            print("  ！（文件没有可分的前缀，可改用 [2] 后缀或 [3] 全部）")
             return None
-        if raw in ("", "0", "q", "返回"):
+        chosen = ask_from_groups(groups, "选择前缀")
+        if not chosen:
             return None
-        prefixes = (raw,)
+        prefixes = (chosen,)
     elif mode == "2":
-        try:
-            raw = input(f"\n后缀（回车 = {' / '.join(KNOWN_SUFFIXES[:3])} …，0 = 返回）: "
-                        ).strip().strip('"')
-        except (EOFError, KeyboardInterrupt):
-            print()
+        groups = detect_suffixes(folder)
+        if not groups:
+            print("  ！（文件名没有可识别的后缀，可改用 [1] 前缀或 [3] 全部）")
             return None
-        if raw in ("0", "q", "返回"):
+        chosen = ask_from_groups(groups, "选择后缀", default_keys=KNOWN_SUFFIXES,
+                                 default_result=tuple(KNOWN_SUFFIXES))
+        if not chosen:
             return None
-        suffixes = (raw,) if raw else KNOWN_SUFFIXES
+        suffixes = chosen if isinstance(chosen, tuple) else (chosen,)
 
     first = pick_merge_file(folder, "第一个文件", prefixes=prefixes, suffixes=suffixes)
     if not first:
