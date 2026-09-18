@@ -70,7 +70,7 @@ python skintool.py layers skin_hex.txt alex -a --out report.txt
 | `txt2png` (`t2p`) | hex grid text | PNG (default `<name>_edited.png`) | `_hex` suffix is stripped |
 | `base` (`b`) | PNG **or** hex text | 6 base parts × 6 faces | Head / Torso / arms / legs |
 | `layers` (`l`) | PNG **or** hex text | 6 overlay parts × 6 faces | Hat / Jacket / sleeves / pants |
-| `merge` (`m`) | a prefix, or 1–2 reports | one skin PNG | default: finds `<prefix>_base` + `<prefix>_layers`; `--scan` uses the built-in suffix set, `--any` scans loosely; every face is written back at its UV coordinates |
+| `merge` (`m`) | a prefix, or 1–2 reports | one skin PNG | a prefix lists every `.txt` starting with it (no `_base`/`_layers` requirement); `--scan` = default suffix set, `--any` = all txt; every face is written back at its UV coordinates |
 
 Run `skintool <command> -h` for everything, or `skintool` with no arguments for the
 interactive menu (pick a command, then pick a file from the current directory by number).
@@ -184,34 +184,30 @@ skintool merge  skin                    :: -> skin_merged.png
 skintool merge  skin --fill skin.png    :: keep the original pixels where no face covers them
 ```
 
-- The prefix picks up `skin_base.txt` + `skin_layers.txt`. Variants are accepted too:
-  `-base` / `-layers`, `base` / `layers`, `overlay`, `_layer`, case-insensitively, `.txt` or
-  `.hex`. You can also pass one file (its partner is found by prefix) or two explicit files
-  (drawn in the given order, later wins).
-- Files whose names carry **no** recognised suffix are not lost — two extra scans find them.
-  The suffix set is **built in** (`_base` / `_layers` / `_layer` / `overlay` / `base` /
-  `layers` / `_bottom` …), you never type a suffix:
+- **A prefix is just a prefix, a suffix is just a suffix.** `skintool merge skin` lists every
+  `.txt` whose name starts with `skin` — nothing has to be called `_base` or `_layers`. The same
+  goes the other way: `skintool merge --suffix _partA` filters by that suffix alone. Only `.txt`
+  files are ever considered. Two explicit files also work (drawn in the given order, later wins).
 
-  | How the two files are selected | CLI | Interactive menu |
+  | Starting filter | CLI | Interactive menu |
   |---|---|---|
-  | by prefix (default) | `skintool merge skin` | `[1]` — lists the report pairs found; a number takes the whole pair |
-  | by the built-in suffix set | `skintool merge --scan` (used when exactly two files match; otherwise the candidates are listed) | `[2]` — lists every file carrying a known suffix, pick two by number |
-  | loose scan of every text file | `skintool merge --any` (same rule: exactly two, else list them) | `[3]` — lists every `.txt` / `.hex` in the directory, pick two by number |
+  | by prefix | `skintool merge skin` (used when exactly two names start with it, else the candidates are listed) | `[1]` — type a prefix, then pick two from that list |
+  | by suffix | `skintool merge --scan` (default suffix set: `_base` / `_layers` / `_layer` / `overlay` …; `--suffix _a,_b` for your own) | `[2]` — Enter keeps the default suffix set, or type any suffix |
+  | everything | `skintool merge --any` (same rule: exactly two, else list them) | `[3]` — lists every `.txt` |
 
-  In the menu the two picks go through the **same picker**, so they can be **mixed freely** —
-  the first from the suffix list, the second filtered with a wildcard (`*_layer`, `Crown*`),
-  or the other way round, or `a` to see everything, or a pasted path from anywhere:
+  Both picks use the **same picker**, so they can be **mixed**: start from the suffix list, then
+  switch the second pick to a prefix, a wildcard (`*_layer`, `Crown*`), `a` for everything, or a
+  pasted path — and the other way round.
 
   ```
-  第一个文件（序号 / 路径 / 过滤如 *_base、Crown* / a=全部 / 0=返回）: *_layers
-  第二个文件（…）: *_base
+  起始方式 [1]: 2
+  第一个文件（序号 / 过滤 / a / 0）: 3
+  第二个文件（序号 / 过滤 / a / 0）: Crow*        <- 换了过滤，这就是混合
   ```
 
-  Each candidate is annotated (`报告 36 面` / `报告 36 面（代号）` / `整幅 hex 网格 64x64`, plus
-  `底层 _base` / `第二层 _layers`), the file already chosen is marked `<- 已选作第一个` and
-  cannot be picked twice, and every prompt reprints the list it numbers. `--suffix _a,_b`
-  remains as an advanced override for unusual names (use `--suffix=-a,-b` when a suffix
-  starts with `-`).
+  Each line shows what the file is (`36 面` / `36 面（代号）` / `整幅 64x64`), the file already
+  chosen is marked `<- 已选作第一个` and cannot be picked twice, and every prompt reprints the
+  list it numbers.
 - Every face is written at the coordinates in its own `--- Part face (x,y wxh) ---` heading,
   so the report always wins over any assumption about the layout. Reports whose arm models
   disagree still merge, but a warning is printed.
@@ -253,23 +249,22 @@ Original `skin_editor.py` and upstream docs © 2025 EinMaulwurf; `skintool.py` /
 ```bat
 skintool png2txt 皮肤.png                 :: PNG → hex 文本（发 LLM 改色）
 skintool txt2png 皮肤_hex.txt             :: 改完的文本 → PNG
-skintool base    皮肤.png slim -a -o 前缀_base.txt     :: 底层各部位/面（-a = 漏面统计）
+skintool base    皮肤.png slim -a -o 前缀_base.txt   :: 底层各部位/面（-a = 漏面统计）
 skintool layers  皮肤.png -s    -o 前缀_layers.txt     :: 第二层（-s = 纤细/Alex 手臂）
-skintool merge   前缀                     :: 前缀_base.txt + 前缀_layers.txt → 前缀_merged.png
+skintool merge   前缀                     :: 列出以该前缀开头的 txt，挑两份 → 前缀_merged.png
 skintool base    皮肤.png -c -p 调色板.gpl :: 调色板代号输出（需自备 .gpl）
 skintool                                  :: 不带参数 = 交互菜单（双击 skintool.cmd）
 ```
 
-- **合并（merge）**：把两份部位报告按报告里写的 UV 坐标写回一张皮肤 PNG。
-  挑文件三种方式：① **默认按前缀**（`前缀_base` + `前缀_layers`，菜单里选号即整对）；② **按内置后缀**
-  （`--scan` / 菜单 `[2]`，后缀是内置集合 `_base`/`_layers`/`_layer`/`overlay`…，**不用自己输**）；
-  ③ **宽松全体扫描**（`--any` / 菜单 `[3]`，列出目录里**所有** txt）。
-  菜单里两次挑选走**同一个选择器**，因此可以**混合**：第一个从后缀列表选，第二个用通配
-  （`*_layer`、`Crown*`）过滤、或输入 `a` 看全部、或直接粘路径。
+- **合并（merge）**：把两份部位报告按报告里写的 UV 坐标写回一张皮肤 PNG。挑文件三种起手方式：
+  ① **按前缀**（`skintool merge Crow_35` / 菜单 `[1]`）—— 列出**以该前缀开头**的 txt，
+  不要求文件叫 `_base`/`_layers`；② **按后缀**（`--scan` 或 `--suffix _partA` / 菜单 `[2]`，
+  回车就用默认后缀集合 `_base`/`_layers`/`_layer`/`overlay`…）；③ **全部**（`--any` / 菜单 `[3]`）。
+  两次挑选用同一个选择器，可**混合**：第一个从后缀列表选，第二个换成前缀、通配（`*_layer`、
+  `Crown*`）、`a`（全部）或直接粘路径。只认 `.txt`。
   没被任何面覆盖的像素默认留透明，加 `--fill 前缀.png` 就保留原图那些位置；
-  代号报告用当初那份 `.gpl`（加 `-p`），调色板里没有的代号会**明确报出数量**并留透明，
-  不会悄悄涂黑。实测：从皮肤提取出的两份报告再合并，能**逐像素还原原皮肤**
-  （64×64 / 128×128、hex / 代号、三种方式 + 混合挑选全部通过）。
+  代号报告用当初那份 `.gpl`（加 `-p`），调色板里没有的代号会**明确报出数量**并留透明。
+  实测：从皮肤提取出的两份报告再合并，能**逐像素还原原皮肤**。
 - **菜单怎么走**：选命令（1-5）→ 按序号选当前目录里的文件 / 报告前缀（也可粘完整路径）→
   手臂类型 → 颜色输出 → 不透明统计 → 输出方式（`1` 打印到屏幕 / `2` 屏幕+写文件 /
   `3` 只写文件）。每题都标了默认值，**任何一步输 `0` 都能返回**；跑之前会打印

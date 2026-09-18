@@ -539,6 +539,30 @@ def report_face_tokens(face, code_mode, reverse=None, path=""):
     return matrix
 
 
+def report_source_png(path):
+    """报告表头 `# 文件: …png` 里记的来源 PNG（存在才返回，否则 None）。静默，不抛错。"""
+    lines = []
+    for enc in ("utf-8-sig", "gbk"):
+        try:
+            with open(path, "r", encoding=enc) as f:
+                lines = [next(f, "") for _ in range(6)]
+            break
+        except Exception:
+            continue
+    for line in lines:
+        text = line.strip()
+        if not text.startswith("#") or "文件" not in text or ":" not in text:
+            continue
+        candidate = text.split(":", 1)[1].strip().strip('"')
+        if not candidate.lower().endswith(".png"):
+            continue
+        here = os.path.dirname(os.path.abspath(path))
+        for probe in (candidate, os.path.join(here, os.path.basename(candidate))):
+            if os.path.isfile(probe):
+                return probe
+    return None
+
+
 def read_merge_input(path):
     """合并用统一读取：PNG / 整幅 hex 网格 / 部位报告 都接受。
 
